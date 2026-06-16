@@ -1,0 +1,13 @@
+{
+  "tamanhoGrid": 8,
+  "larguraTela": 1280,
+  "alturaTela": 800,
+  "palavrasPorNivel": {
+    "facil": 5,
+    "medio": 6,
+    "dificil": 8
+  },
+  "permitirVertical": true,
+  "permitirDiagonal": false,
+  "permitirReversas": true
+}
