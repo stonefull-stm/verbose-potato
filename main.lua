@@ -1,6 +1,9 @@
 -------------------------------------------------
+local socket = require("socket")
+local server
+
 -- Configurações Globais
-local TAM_GRID = 8 -- Tamanho da grade (8x8)
+local TAM_GRID -- Tamanho da grade (8x8)
 local TAM_CELULA = 70 -- Células grandes para facilitar a leitura
 local OFFSET_X = 50
 local OFFSET_Y = 100
@@ -29,15 +32,22 @@ local inicioX, inicioY = 0, 0
 function love.load()
 	menu.init()
 	menu.carregarConfig()
+
+	-- Pega configurações no arquivo
 	config = menu.getConfig()
+	TAM_GRID = config["tamanhoGrid"]
+
 	-- Configuração da tela para alta resolução e visibilidade
 	love.window.setMode(config["larguraTela"], config["alturaTela"])
+
 	-- Carregar banco de palavras
 	carregarBancoDePalavras("palavras.txt")
 
 	-- Fontes nativas grandes para acessibilidade
 	fonteGrande = love.graphics.newFont(40)
 	fonteTitulo = love.graphics.newFont(48)
+	server = assert(socket.bind("0.0.0.0", 8080))
+	server:settimeout(0)
 end
 
 function inicializarJogo(dificuldade)
@@ -49,13 +59,7 @@ function inicializarJogo(dificuldade)
 	selecionando = false
 
 	-- Define quantidade de palavras por dificuldade
-	local qtdPalavras = 5
-	if dificuldade == "medio" then
-		qtdPalavras = 6
-	end
-	if dificuldade == "dificil" then
-		qtdPalavras = 8
-	end
+	local qtdPalavras = config["palavrasPorNivel"][dificuldade]
 
 	-- Sorteia palavras sem repetir
 	math.randomseed(os.time())
@@ -90,8 +94,10 @@ function inicializarJogo(dificuldade)
 				inicializarJogo(dificuldade)
 				return
 			end
-
-			local direcao = math.random(2) -- 1 (Horizontal) -- 2 (Vertical)
+			local direcao = 1
+			if config["permitirVertical"] then
+				direcao = math.random(2) -- 1 (Horizontal) -- 2 (Vertical)
+			end
 			local x, y
 			if direcao == 1 then
 				y = math.random(1, TAM_GRID)
@@ -259,6 +265,70 @@ function carregarBancoDePalavras(caminhoDoArquivo)
 		end
 	else
 		print("Erro: O arquivo " .. caminhoDoArquivo .. " não foi encontrado!")
+	end
+end
+
+function love.update(dt)
+	_ = dt
+	local client = server:accept()
+	if client then
+		client:settimeout(2)
+
+		-- Lê headers
+		local requisicao = {}
+		local linha
+		repeat
+			linha = client:receive()
+			if linha then
+				table.insert(requisicao, linha)
+			end
+		until not linha or linha == ""
+
+		-- Descobre tamanho do corpo
+		---@type integer? -- Evita que LuaLS reclame do cast tonumber(n)
+		local tamanho = 0
+		for _, h in ipairs(requisicao) do
+			local n = h:match("[Cc]ontent%-[Ll]ength:%s*(%d+)")
+			if n then
+				tamanho = tonumber(n)
+			end
+		end
+
+		-- Lê corpo
+		local comando = ""
+		if tamanho > 0 then
+			comando = client:receive(tamanho) or ""
+		end
+		comando = comando:gsub("%s+", "")
+
+		-- Processa comando
+		if comando == "up" then
+			cursorY = math.max(1, cursorY - 1)
+		elseif comando == "down" then
+			cursorY = math.min(TAM_GRID, cursorY + 1)
+		elseif comando == "left" then
+			cursorX = math.max(1, cursorX - 1)
+		elseif comando == "right" then
+			cursorX = math.min(TAM_GRID, cursorX + 1)
+		elseif comando == "enter" then
+			if not selecionando then
+				-- Inicia a seleção da palavra
+				selecionando = true
+				inicioX, inicioY = cursorX, cursorY
+			else
+				-- Finaliza a seleção e checa se formou uma palavra válida
+				verificarPalavraSelecionada(inicioX, inicioY, cursorX, cursorY)
+				selecionando = false
+			end
+		end
+
+		-- Resposta com CORS
+		client:send("HTTP/1.1 200 OK\r\n")
+		client:send("Access-Control-Allow-Origin: *\r\n")
+		client:send("Content-Type: text/plain\r\n")
+		client:send("Connection: close\r\n\r\n")
+		client:send("OK")
+		client:close()
 	end
 end
 
